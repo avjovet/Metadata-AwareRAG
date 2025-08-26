@@ -1,0 +1,14 @@
+__pycache__/
+
+
+
+.env
+.venv
+env/
+venv/
+
+vector_dbs/
+ragas/
+scripts/
+results/
+chroma_dbs/

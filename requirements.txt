@@ -1,0 +1,34 @@
+# LangChain Core and Community Integrations
+langchain
+langchain-community
+langchain-ollama
+langchain-core
+langchain-chroma
+langchain-huggingface
+
+# Vector Database
+chromadb
+
+# PDF Document Loader
+pypdf
+
+# PyTorch for embeddings
+torch
+
+# Jina Reranker local dependencies
+transformers
+einops
+sentence-transformers
+
+# Flash Attention (optional - for 3x-6x speedup)
+# pip install ninja
+# pip install flash-attn --no-build-isolation
+
+# Environment Variables
+python-dotenv
+
+# Evaluation framework
+ragas
+
+lark
+
