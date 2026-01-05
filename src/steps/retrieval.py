@@ -6,18 +6,39 @@ from langchain_core.retrievers import BaseRetriever
 from ..types import RetrievalResult
 from ..steps.prompts import HYDE_PROMPT
 from ..config.settings import settings
-
-
-def docs_to_text(docs: List[Document]) -> str:
-    return "\n\n".join([d.page_content for d in docs])
+from ..utils.document_utils import docs_to_text
 
 
 def is_ambiguous_query(question: str) -> bool:
+    """
+    Determina si una pregunta es ambigua y podría beneficiarse de HYDE.
+    
+    Args:
+        question: Pregunta del usuario
+        
+    Returns:
+        True si la pregunta contiene palabras clave ambiguas
+    """
     ambiguous_keywords = ["idiomas", "lenguas", "simbolos", "que dice", "como es", "donde esta"]
     return any(keyword in question.lower() for keyword in ambiguous_keywords)
 
 
-def get_docs_with_hyde(question: str, base_retriever: BaseRetriever, llm) -> List[Document]:
+def get_docs_with_hyde(
+    question: str, 
+    base_retriever: BaseRetriever, 
+    llm
+) -> List[Document]:
+    """
+    Obtiene documentos usando la técnica HYDE (Hypothetical Document Embeddings).
+    
+    Args:
+        question: Pregunta del usuario
+        base_retriever: Retriever base para búsqueda
+        llm: Modelo de lenguaje para generar documento hipotético
+        
+    Returns:
+        Lista de documentos recuperados usando HYDE, o lista vacía si hay error
+    """
     try:
         hyde_prompt = HYDE_PROMPT.format(question=question)
         hypothetical_doc_message = llm.invoke(hyde_prompt)
@@ -36,6 +57,19 @@ def retrieve_documents(
     use_hyde: bool = True,
     top_k: int = None
 ) -> RetrievalResult:
+    """
+    Recupera documentos relevantes para una pregunta usando búsqueda directa o HYDE.
+    
+    Args:
+        question: Pregunta del usuario
+        base_retriever: Retriever base para búsqueda vectorial
+        llm: Modelo de lenguaje (opcional, necesario para HYDE)
+        use_hyde: Si usar técnica HYDE cuando la pregunta es ambigua
+        top_k: Número máximo de documentos a recuperar
+        
+    Returns:
+        RetrievalResult con documentos recuperados y método usado
+    """
     final_top_k = top_k or settings.DEFAULT_TOP_K
     
     docs = base_retriever.invoke(question)
@@ -63,7 +97,24 @@ def retrieve_documents(
     )
 
 
-def create_retrieval_chain(base_retriever: BaseRetriever, llm=None, use_hyde: bool = True, top_k: int = None):
+def create_retrieval_chain(
+    base_retriever: BaseRetriever, 
+    llm=None, 
+    use_hyde: bool = True, 
+    top_k: int = None
+):
+    """
+    Crea una cadena de recuperación de documentos para usar en pipelines.
+    
+    Args:
+        base_retriever: Retriever base para búsqueda vectorial
+        llm: Modelo de lenguaje (opcional, necesario para HYDE)
+        use_hyde: Si usar técnica HYDE cuando sea apropiado
+        top_k: Número máximo de documentos a recuperar
+        
+    Returns:
+        RunnableLambda que recupera documentos para una pregunta
+    """
     def retrieval_step(input_dict: Dict[str, Any]) -> Dict[str, Any]:
         question = input_dict["question"]
         result = retrieve_documents(question, base_retriever, llm, use_hyde, top_k)

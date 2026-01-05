@@ -24,6 +24,11 @@ class Settings:
     DEFAULT_TOP_K: int = int(os.getenv("DEFAULT_TOP_K", "10"))
     DEFAULT_TEMPERATURE: float = float(os.getenv("DEFAULT_TEMPERATURE", "0.0"))
     
+    # Valores por defecto específicos de pipelines (mantener valores actuales)
+    NAIVE_PIPELINE_TEMPERATURE: float = 0.1
+    NAIVE_PIPELINE_TOP_K: int = 5
+    DYNAMIC_PIPELINE_TOP_K: int = 15
+    
     # Configuración de self-querying
     ENABLE_SELF_QUERY: bool = os.getenv("ENABLE_SELF_QUERY", "true").lower() == "true"
     

@@ -1,4 +1,5 @@
-from typing import Dict, Any, List
+import logging
+from typing import Dict, Any, List, Optional
 from langchain_core.runnables import (
     RunnablePassthrough, 
     RunnableLambda, 
@@ -7,6 +8,8 @@ from langchain_core.runnables import (
     Runnable
 )
 from operator import itemgetter
+
+logger = logging.getLogger(__name__)
 
 from langchain_core.documents import Document
 from ..io.vectordb import get_vector_store, get_self_query_retriever
@@ -28,19 +31,34 @@ from ..steps.synthesis import (
 )
 from ..types import PipelineInput, PipelineOutput, SemanticRouterOutput, ExtractedFilters
 from ..config.settings import settings
+from ..utils.validators import QuestionValidator
 
 
 def create_dynamic_rag_pipeline(
     db_folder_name: str,
     embedding_model_name: str,
-    llm_model_name: str = None,
-    temperature: float = None,
-    top_k: int = None,
-    enable_self_query: bool = None
+    llm_model_name: Optional[str] = None,
+    temperature: Optional[float] = None,
+    top_k: Optional[int] = None,
+    enable_self_query: Optional[bool] = None
 ) -> Runnable:
-    llm_model_name = llm_model_name or "llama3.1:8b"
-    temperature = temperature or 0.0
-    top_k = top_k or 15
+    """
+    Crea un pipeline RAG dinámico con routing, filtrado adaptativo y reranking.
+    
+    Args:
+        db_folder_name: Nombre de la carpeta de la base de datos vectorial
+        embedding_model_name: Nombre del modelo de embeddings
+        llm_model_name: Nombre del modelo LLM (por defecto desde settings)
+        temperature: Temperatura para el LLM (por defecto 0.0)
+        top_k: Número de documentos a recuperar (por defecto 15)
+        enable_self_query: Si habilitar self-query con filtros de metadatos
+        
+    Returns:
+        Runnable que implementa el pipeline RAG dinámico completo
+    """
+    llm_model_name = llm_model_name or settings.OLLAMA_MODEL
+    temperature = temperature if temperature is not None else settings.DEFAULT_TEMPERATURE
+    top_k = top_k or settings.DYNAMIC_PIPELINE_TOP_K
     enable_self_query = enable_self_query if enable_self_query is not None else True
     
     vector_store = get_vector_store(db_folder_name, embedding_model_name)
@@ -51,7 +69,7 @@ def create_dynamic_rag_pipeline(
     
     self_query_retriever = create_self_query_retriever(llm, vector_store, top_k=top_k)
     
-    def debug_quality_router(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    def quality_router_step(inputs: Dict[str, Any]) -> Dict[str, Any]:
         question = inputs.get("question", "NO_QUESTION")
         
         try:
@@ -65,6 +83,7 @@ def create_dynamic_rag_pipeline(
                 return inputs
                 
         except Exception as e:
+            logger.error(f"Error en quality router: {e}", exc_info=True)
             return {
                 **inputs,
                 "has_spelling_errors": False,
@@ -72,7 +91,7 @@ def create_dynamic_rag_pipeline(
                 "correction_notes": f"Error en corrección: {e}"
             }
 
-    quality_router_chain = RunnableLambda(debug_quality_router)
+    quality_router_chain = RunnableLambda(quality_router_step)
 
     def rerank_docs(inputs: Dict[str, Any]) -> List[Document]:
         question = inputs.get("question", "NO_QUESTION")
@@ -148,22 +167,6 @@ def create_dynamic_rag_pipeline(
                 "context": "\n\n".join([d.page_content for d in x.get("retrieved_docs", [])]) if x.get("retrieved_docs", []) else "",
                 "question": x.get("question", "")
             })
-            | RunnableLambda(lambda x: {
-                "context": x["context"],
-                "question": x["question"],
-                "debug_context_length": len(x["context"]),
-                "debug_context_preview": x["context"][:500] + "..." if len(x["context"]) > 500 else x["context"]
-            })
-            | RunnableLambda(lambda x: {
-                "context": x["context"],
-                "question": x["question"]
-            })
-            | RunnableLambda(lambda x: {
-                "context": x["context"],
-                "question": x["question"],
-                "debug_step4_context": x["context"],
-                "debug_step4_question": x["question"]
-            })
             | rag_answer_chain
         )
     )
@@ -191,21 +194,33 @@ def create_dynamic_rag_pipeline(
 
 
 def invoke_dynamic_pipeline(chain: Runnable, question: str) -> PipelineOutput:
-    if not question:
+    """
+    Ejecuta el pipeline dinámico con una pregunta.
+    
+    Args:
+        chain: Cadena del pipeline dinámico
+        question: Pregunta del usuario
+        
+    Returns:
+        PipelineOutput con respuesta generada, contexto recuperado y metadatos del proceso
+    """
+    is_valid, error_message = QuestionValidator.validate(question)
+    if not is_valid:
         return PipelineOutput(
-            question=question,
+            question=question or "",
             generated_answer="",
             retrieved_context=[],
-            error="La pregunta no puede estar vacía."
+            error=error_message
         )
     
     try:
         result = chain.invoke({"question": question})
         return result
-    except Exception as e:
-        return PipelineOutput(
-            question=question,
-            generated_answer=f"Error en el pipeline: {str(e)}",
-            retrieved_context=[],
-            error=str(e)
-        )
+        except Exception as e:
+            logger.error(f"Error en dynamic pipeline: {e}", exc_info=True)
+            return PipelineOutput(
+                question=question,
+                generated_answer=f"Error en el pipeline: {str(e)}",
+                retrieved_context=[],
+                error=str(e)
+            )

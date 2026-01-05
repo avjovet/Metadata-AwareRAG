@@ -1,10 +1,18 @@
-from typing import Dict, Any, List, Optional, Tuple
+import json
+import re
+import logging
+from typing import Dict, Any, List, Optional, Tuple, Callable
 from langchain_core.documents import Document
-from langchain_core.runnables import RunnableLambda
+from langchain_core.runnables import RunnableLambda, Runnable
 from langchain_core.prompts import PromptTemplate
+from langchain_core.language_models import BaseLanguageModel
+from langchain_chroma import Chroma
+
+logger = logging.getLogger(__name__)
 
 from ..types import SemanticRouterOutput, ExtractedFilters, StructuredRetrievalInput
 from ..io.llm import get_llm
+from ..config.constants import LegalConstants
 
 
 FILTER_PRIORITIES = {
@@ -29,15 +37,111 @@ GENERIC_VALUES = {
 }
 
 
+def _validate_title_field(
+    value: Any, 
+    validated_filters: Dict[str, Any], 
+    discarded_filters: List[str]
+) -> bool:
+    """
+    Valida el campo title.
+    
+    Args:
+        value: Valor del campo title
+        validated_filters: Diccionario de filtros validados (se actualiza si es válido)
+        discarded_filters: Lista de filtros descartados (se actualiza si es inválido)
+        
+    Returns:
+        True si el campo es válido y se agregó a validated_filters, False en caso contrario
+    """
+    if value in GENERIC_VALUES.get("title", []):
+        discarded_filters.append(f"title: {value} (genérico)")
+        return False
+    
+    if "document_type" in validated_filters:
+        doc_type = validated_filters["document_type"]
+        if doc_type in VALID_VALUES["title"] and value not in VALID_VALUES["title"][doc_type]:
+            discarded_filters.append(f"title: {value} (no coincide con {doc_type})")
+            return False
+    
+    validated_filters["title"] = value
+    return True
+
+
+def _validate_article_number_field(
+    value: Any, 
+    validated_filters: Dict[str, Any], 
+    discarded_filters: List[str]
+) -> bool:
+    """
+    Valida el campo article_number.
+    
+    Args:
+        value: Valor del campo article_number
+        validated_filters: Diccionario de filtros validados (se actualiza si es válido)
+        discarded_filters: Lista de filtros descartados (se actualiza si es inválido)
+        
+    Returns:
+        True si el campo es válido y se agregó a validated_filters, False en caso contrario
+    """
+    if isinstance(value, int) and LegalConstants.MIN_ARTICLE_NUMBER <= value <= LegalConstants.MAX_ARTICLE_NUMBER:
+        validated_filters["article_number"] = value
+        return True
+    else:
+        discarded_filters.append(f"article_number: {value} (número inválido)")
+        return False
+
+
+def _validate_year_field(
+    value: Any, 
+    validated_filters: Dict[str, Any], 
+    discarded_filters: List[str]
+) -> bool:
+    """
+    Valida el campo year.
+    
+    Args:
+        value: Valor del campo year
+        validated_filters: Diccionario de filtros validados (se actualiza si es válido)
+        discarded_filters: Lista de filtros descartados (se actualiza si es inválido)
+        
+    Returns:
+        True si el campo es válido y se agregó a validated_filters, False en caso contrario
+    """
+    if isinstance(value, int) and LegalConstants.MIN_YEAR <= value <= LegalConstants.MAX_YEAR:
+        validated_filters["year"] = value
+        return True
+    else:
+        discarded_filters.append(f"year: {value} (año inválido)")
+        return False
+
+
 def validate_and_normalize_filters(filters: ExtractedFilters) -> Tuple[Dict[str, Any], List[str]]:
+    """
+    Valida y normaliza filtros extraídos de una pregunta.
+    
+    Los filtros se validan según prioridades:
+    1. Filtros redundantes se descartan automáticamente
+    2. Filtros primarios se validan contra valores permitidos
+    3. Filtros secundarios tienen validación específica por tipo
+    
+    Args:
+        filters: Filtros extraídos del LLM
+        
+    Returns:
+        Tuple de (filtros_validados, filtros_descartados)
+        - filtros_validados: Diccionario con filtros que pasaron la validación
+        - filtros_descartados: Lista de strings describiendo filtros descartados y razón
+    """
     filter_dict = filters.dict() if hasattr(filters, 'dict') else filters
     validated_filters = {}
     discarded_filters = []
     
+    # Descartar filtros redundantes
     for field in FILTER_PRIORITIES["redundant"]:
         if field in filter_dict and filter_dict[field] is not None:
             discarded_filters.append(f"{field}: {filter_dict[field]} (redundante)")
     
+    # Validar filtros primarios
     for field in FILTER_PRIORITIES["primary"]:
         if field in filter_dict and filter_dict[field] is not None:
             value = filter_dict[field]
@@ -47,41 +151,31 @@ def validate_and_normalize_filters(filters: ExtractedFilters) -> Tuple[Dict[str,
             else:
                 validated_filters[field] = value
     
+    # Validar filtros secundarios con lógica específica
     for field in FILTER_PRIORITIES["secondary"]:
         if field in filter_dict and filter_dict[field] is not None:
             value = filter_dict[field]
             
             if field == "title":
-                if value in GENERIC_VALUES.get("title", []):
-                    discarded_filters.append(f"{field}: {value} (genérico)")
-                    continue
-                
-                if "document_type" in validated_filters:
-                    doc_type = validated_filters["document_type"]
-                    if doc_type in VALID_VALUES["title"] and value not in VALID_VALUES["title"][doc_type]:
-                        discarded_filters.append(f"{field}: {value} (no coincide con {doc_type})")
-                        continue
-                
-                validated_filters[field] = value
-                
+                _validate_title_field(value, validated_filters, discarded_filters)
             elif field == "article_number":
-                if isinstance(value, int) and 1 <= value <= 206:
-                    validated_filters[field] = value
-                else:
-                    discarded_filters.append(f"{field}: {value} (número inválido)")
-                    
+                _validate_article_number_field(value, validated_filters, discarded_filters)
             elif field == "year":
-                if isinstance(value, int) and 1990 <= value <= 2024:
-                    validated_filters[field] = value
-                else:
-                    discarded_filters.append(f"{field}: {value} (año inválido)")
+                _validate_year_field(value, validated_filters, discarded_filters)
     
     return validated_filters, discarded_filters
 
 
-def create_filter_strategies(validated_filters: Dict[str, Any], semantic_category: str) -> List[Dict[str, Any]]:
-    strategies = []
+def _get_fixed_metadata(semantic_category: str) -> Dict[str, Any]:
+    """
+    Obtiene metadatos fijos basados en la categoría semántica.
     
+    Args:
+        semantic_category: Categoría semántica determinada por el router
+        
+    Returns:
+        Diccionario con metadatos fijos para la categoría
+    """
     fixed_metadata = {
         "constitucion": {
             "source": "Constitución Política del Perú",
@@ -100,131 +194,184 @@ def create_filter_strategies(validated_filters: Dict[str, Any], semantic_categor
         },
         "general": {}
     }
+    return fixed_metadata.get(semantic_category, {})
+
+
+def _create_all_filters_strategy(
+    fixed_filters: Dict[str, Any], 
+    validated_filters: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Crea estrategia con todos los filtros disponibles."""
+    all_filters = fixed_filters.copy()
+    for key, value in validated_filters.items():
+        if value is not None:
+            all_filters[key] = value
     
-    fixed_filters = fixed_metadata.get(semantic_category, {})
+    return {
+        "name": "todos_filtros",
+        "filters": all_filters,
+        "description": f"Todos los filtros: {list(all_filters.keys())}"
+    }
+
+
+def _create_without_title_strategy(
+    fixed_filters: Dict[str, Any], 
+    validated_filters: Dict[str, Any]
+) -> Dict[str, Any] | None:
+    """Crea estrategia sin el campo title."""
+    filters_without_title = fixed_filters.copy()
+    for key, value in validated_filters.items():
+        if value is not None and key != 'title':
+            filters_without_title[key] = value
     
-    has_variables = any(value is not None for value in validated_filters.values())
+    if len(filters_without_title) > len(fixed_filters):
+        return {
+            "name": "sin_title",
+            "filters": filters_without_title,
+            "description": f"Sin title: {list(filters_without_title.keys())}"
+        }
+    return None
+
+
+def _create_without_doc_type_strategy(
+    fixed_filters: Dict[str, Any], 
+    validated_filters: Dict[str, Any]
+) -> Dict[str, Any] | None:
+    """Crea estrategia sin el campo document_type."""
+    filters_without_doc_type = fixed_filters.copy()
+    if 'document_type' in filters_without_doc_type:
+        del filters_without_doc_type['document_type']
+    for key, value in validated_filters.items():
+        if value is not None and key not in ['title', 'document_type']:
+            filters_without_doc_type[key] = value
     
-    if has_variables and fixed_filters:
-        all_filters = fixed_filters.copy()
-        for key, value in validated_filters.items():
-            if value is not None:
-                all_filters[key] = value
-        
-        strategies.append({
-            "name": "todos_filtros",
-            "filters": all_filters,
-            "description": f"Todos los filtros: {list(all_filters.keys())}"
-        })
-        
-        filters_without_title = fixed_filters.copy()
-        for key, value in validated_filters.items():
-            if value is not None and key != 'title':
-                filters_without_title[key] = value
-        
-        if len(filters_without_title) > len(fixed_filters):
-            strategies.append({
-                "name": "sin_title",
-                "filters": filters_without_title,
-                "description": f"Sin title: {list(filters_without_title.keys())}"
-            })
-        
-        filters_without_doc_type = fixed_filters.copy()
-        if 'document_type' in filters_without_doc_type:
-            del filters_without_doc_type['document_type']
-        for key, value in validated_filters.items():
-            if value is not None and key not in ['title', 'document_type']:
-                filters_without_doc_type[key] = value
-        
-        if len(filters_without_doc_type) > 0:
-            strategies.append({
-                "name": "sin_document_type",
-                "filters": filters_without_doc_type,
-                "description": f"Sin document_type: {list(filters_without_doc_type.keys())}"
-            })
-        
-        filters_without_year = fixed_filters.copy()
-        for key in ['document_type', 'year']:
-            if key in filters_without_year:
-                del filters_without_year[key]
-        for key, value in validated_filters.items():
-            if value is not None and key not in ['title', 'document_type', 'year']:
-                filters_without_year[key] = value
-        
-        if len(filters_without_year) > 0:
-            strategies.append({
-                "name": "sin_year",
-                "filters": filters_without_year,
-                "description": f"Sin year: {list(filters_without_year.keys())}"
-            })
+    if len(filters_without_doc_type) > 0:
+        return {
+            "name": "sin_document_type",
+            "filters": filters_without_doc_type,
+            "description": f"Sin document_type: {list(filters_without_doc_type.keys())}"
+        }
+    return None
+
+
+def _create_without_year_strategy(
+    fixed_filters: Dict[str, Any], 
+    validated_filters: Dict[str, Any]
+) -> Dict[str, Any] | None:
+    """Crea estrategia sin los campos document_type y year."""
+    filters_without_year = fixed_filters.copy()
+    for key in ['document_type', 'year']:
+        if key in filters_without_year:
+            del filters_without_year[key]
+    for key, value in validated_filters.items():
+        if value is not None and key not in ['title', 'document_type', 'year']:
+            filters_without_year[key] = value
     
-    if fixed_filters:
-        basic_filters = {}
-        for key in ['source', 'topic']:
-            if key in fixed_filters:
-                basic_filters[key] = fixed_filters[key]
-        
-        if basic_filters:
-            strategies.append({
-                "name": "solo_basicos",
-                "filters": basic_filters,
-                "description": f"Solo básicos: {list(basic_filters.keys())}"
-            })
+    if len(filters_without_year) > 0:
+        return {
+            "name": "sin_year",
+            "filters": filters_without_year,
+            "description": f"Sin year: {list(filters_without_year.keys())}"
+        }
+    return None
+
+
+def _create_basic_filters_strategy(fixed_filters: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Crea estrategia con solo filtros básicos (source y topic)."""
+    basic_filters = {}
+    for key in ['source', 'topic']:
+        if key in fixed_filters:
+            basic_filters[key] = fixed_filters[key]
     
-    strategies.append({
+    if basic_filters:
+        return {
+            "name": "solo_basicos",
+            "filters": basic_filters,
+            "description": f"Solo básicos: {list(basic_filters.keys())}"
+        }
+    return None
+
+
+def _create_no_filters_strategy() -> Dict[str, Any]:
+    """Crea estrategia sin filtros (búsqueda semántica pura)."""
+    return {
         "name": "sin_filtros",
         "filters": {},
         "description": "Búsqueda semántica pura en toda la BD"
-    })
+    }
+
+
+def create_filter_strategies(validated_filters: Dict[str, Any], semantic_category: str) -> List[Dict[str, Any]]:
+    """
+    Crea lista de estrategias de filtrado ordenadas por especificidad.
+    
+    Args:
+        validated_filters: Filtros validados extraídos de la pregunta
+        semantic_category: Categoría semántica determinada por el router
+        
+    Returns:
+        Lista de estrategias de filtrado, desde más específica a menos específica
+    """
+    strategies = []
+    fixed_filters = _get_fixed_metadata(semantic_category)
+    has_variables = any(value is not None for value in validated_filters.values())
+    
+    if has_variables and fixed_filters:
+        strategies.append(_create_all_filters_strategy(fixed_filters, validated_filters))
+        
+        without_title = _create_without_title_strategy(fixed_filters, validated_filters)
+        if without_title:
+            strategies.append(without_title)
+        
+        without_doc_type = _create_without_doc_type_strategy(fixed_filters, validated_filters)
+        if without_doc_type:
+            strategies.append(without_doc_type)
+        
+        without_year = _create_without_year_strategy(fixed_filters, validated_filters)
+        if without_year:
+            strategies.append(without_year)
+    
+    if fixed_filters:
+        basic = _create_basic_filters_strategy(fixed_filters)
+        if basic:
+            strategies.append(basic)
+    
+    strategies.append(_create_no_filters_strategy())
     
     return strategies
 
 
 def clean_semantic_response(json_data: dict) -> dict:
-    if isinstance(json_data, str):
-        import re
-        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', json_data, re.DOTALL)
-        if json_match:
-            try:
-                import json
-                json_data = json.loads(json_match.group(1))
-            except:
-                try:
-                    json_data = json.loads(json_data)
-                except:
-                    return {
-                        'category': 'general',
-                        'confidence': 0.5,
-                        'reasoning': 'Error en parsing JSON'
-                    }
+    """
+    Limpia y valida respuesta JSON del router semántico.
     
-    valid_fields = {'category', 'confidence', 'reasoning'}
-    
-    cleaned_data = {}
-    
-    for field, value in json_data.items():
-        if field in valid_fields:
-            if field == 'confidence' and value is not None:
-                try:
-                    cleaned_data[field] = float(value)
-                except (ValueError, TypeError):
-                    cleaned_data[field] = 0.5
-            else:
-                cleaned_data[field] = value
-    
-    for field in valid_fields:
-        if field not in cleaned_data:
-            if field == 'confidence':
-                cleaned_data[field] = 0.5
-            elif field == 'category':
-                cleaned_data[field] = 'general'
-            else:
-                cleaned_data[field] = 'Sin razonamiento'
-    
-    return cleaned_data
+    Args:
+        json_data: Datos JSON (puede ser string o dict)
+        
+    Returns:
+        Diccionario limpio con campos válidos: category, confidence, reasoning
+    """
+    return parse_llm_json_response(
+        response=json_data,
+        expected_fields={'category', 'confidence', 'reasoning'},
+        default_values={
+            'category': 'general',
+            'confidence': 0.5,
+            'reasoning': 'Sin razonamiento'
+        }
+    )
 
 
-def create_semantic_router(llm) -> RunnableLambda:
+def create_semantic_router(llm: BaseLanguageModel) -> Runnable:
+    """
+    Crea un router semántico para clasificar el tipo de documento objetivo.
+    
+    Args:
+        llm: Modelo de lenguaje para clasificación semántica
+        
+    Returns:
+        Runnable que clasifica preguntas en categorías: constitucion, derecho_laboral, faq, general
+    """
     try:
         structured_llm = llm.with_structured_output(SemanticRouterOutput)
     except Exception:
@@ -262,14 +409,13 @@ Clasifica esta pregunta determinando:
 3. El razonamiento detrás de tu decisión
 """)
     
-    def debug_semantic_router(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    def semantic_router_step(inputs: Dict[str, Any]) -> Dict[str, Any]:
         question = inputs.get("question", "")
         
         try:
             response = llm.invoke(semantic_router_prompt.format(question=question))
             response_text = response.content if hasattr(response, 'content') else str(response)
             
-            import json
             try:
                 json_data = json.loads(response_text.strip())
             except json.JSONDecodeError:
@@ -288,7 +434,8 @@ Clasifica esta pregunta determinando:
                 "semantic_reasoning": reasoning
             }
             
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error en semantic router: {e}", exc_info=True)
             return {
                 **inputs,
                 "semantic_category": "general",
@@ -296,10 +443,19 @@ Clasifica esta pregunta determinando:
                 "semantic_reasoning": "Error en clasificación"
             }
     
-    return RunnableLambda(debug_semantic_router)
+    return RunnableLambda(semantic_router_step)
 
 
-def create_filter_extractor(llm) -> RunnableLambda:
+def create_filter_extractor(llm: BaseLanguageModel) -> Runnable:
+    """
+    Crea un extractor de filtros para extraer metadatos variables de preguntas.
+    
+    Args:
+        llm: Modelo de lenguaje para extracción de metadatos
+        
+    Returns:
+        Runnable que extrae filtros como article_number, title, year de la pregunta
+    """
     try:
         structured_llm = llm.with_structured_output(ExtractedFilters)
     except Exception:
@@ -346,14 +502,13 @@ Pregunta: {question}
 Extrae SOLO los metadatos variables mencionados:
 """)
     
-    def debug_filter_extractor(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    def filter_extractor_step(inputs: Dict[str, Any]) -> Dict[str, Any]:
         question = inputs.get("question", "")
         
         try:
             response = llm.invoke(filter_extractor_prompt.format(question=question))
             response_text = response.content if hasattr(response, 'content') else str(response)
             
-            import json
             try:
                 json_data = json.loads(response_text.strip())
             except json.JSONDecodeError:
@@ -375,8 +530,8 @@ Extrae SOLO los metadatos variables mencionados:
                 "extracted_filters": filters
             }
             
-        except Exception:
-            import re
+        except Exception as e:
+            logger.error(f"Error en filter extractor: {e}", exc_info=True)
             filters = ExtractedFilters()
             
             article_match = re.search(r'artículo\s+(\d+)', question, re.IGNORECASE)
@@ -392,59 +547,43 @@ Extrae SOLO los metadatos variables mencionados:
                 "extracted_filters": filters
             }
     
-    return RunnableLambda(debug_filter_extractor)
+    return RunnableLambda(filter_extractor_step)
 
 
 def clean_json_response(json_data: dict) -> dict:
-    if isinstance(json_data, str):
-        import re
-        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', json_data, re.DOTALL)
-        if json_match:
-            try:
-                import json
-                json_data = json.loads(json_match.group(1))
-            except:
-                try:
-                    json_data = json.loads(json_data)
-                except:
-                    return {
-                        'article_number': None,
-                        'title': None,
-                        'year': None,
-                        'source': None,
-                        'document_type': None,
-                        'topic': None
-                    }
+    """
+    Limpia y valida respuesta JSON del extractor de filtros.
     
-    valid_fields = {
-        'article_number', 'title', 'year', 'source', 'document_type', 'topic'
-    }
-    
-    cleaned_data = {}
-    
-    for field, value in json_data.items():
-        if field in valid_fields:
-            if field == 'article_number' and value is not None:
-                try:
-                    cleaned_data[field] = int(value)
-                except (ValueError, TypeError):
-                    cleaned_data[field] = None
-            elif field == 'year' and value is not None:
-                try:
-                    cleaned_data[field] = int(value)
-                except (ValueError, TypeError):
-                    cleaned_data[field] = None
-            else:
-                cleaned_data[field] = value
-    
-    for field in valid_fields:
-        if field not in cleaned_data:
-            cleaned_data[field] = None
-    
-    return cleaned_data
+    Args:
+        json_data: Datos JSON (puede ser string o dict)
+        
+    Returns:
+        Diccionario limpio con campos válidos de filtros extraídos
+    """
+    return parse_llm_json_response(
+        response=json_data,
+        expected_fields={'article_number', 'title', 'year', 'source', 'document_type', 'topic'},
+        default_values={
+            'article_number': None,
+            'title': None,
+            'year': None,
+            'source': None,
+            'document_type': None,
+            'topic': None
+        }
+    )
 
 
 def build_chromadb_filter(filters: Dict[str, Any]) -> Optional[dict]:
+    """
+    Construye un filtro de ChromaDB a partir de un diccionario de filtros.
+    
+    Args:
+        filters: Diccionario con filtros a aplicar
+        
+    Returns:
+        Filtro de ChromaDB en formato compatible, o None si no hay filtros
+    """
     if not filters:
         return None
     
@@ -467,8 +606,18 @@ def build_chromadb_filter(filters: Dict[str, Any]) -> Optional[dict]:
         return {"$and": filter_conditions}
 
 
-def create_retrieval_assembler(vectorstore, top_k: int = 15) -> RunnableLambda:
-    def debug_retrieval_assembler(inputs: Dict[str, Any]) -> List[Document]:
+def create_retrieval_assembler(vectorstore: Chroma, top_k: int = 15) -> Runnable:
+    """
+    Crea un ensamblador de recuperación que aplica estrategias de filtrado adaptativas.
+    
+    Args:
+        vectorstore: Almacén vectorial de ChromaDB
+        top_k: Número máximo de documentos a recuperar
+        
+    Returns:
+        Runnable que recupera documentos usando estrategias de filtrado progresivas
+    """
+    def retrieval_assembler_step(inputs: Dict[str, Any]) -> List[Document]:
         question = inputs.get("question", "")
         filters = inputs.get("extracted_filters", ExtractedFilters())
         semantic_category = inputs.get("semantic_category", "general")
@@ -495,18 +644,35 @@ def create_retrieval_assembler(vectorstore, top_k: int = 15) -> RunnableLambda:
             
             return []
             
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error en retrieval assembler: {e}", exc_info=True)
             try:
                 basic_retriever = vectorstore.as_retriever(search_kwargs={"k": top_k})
                 docs = basic_retriever.invoke(question)
                 return docs
-            except:
+            except Exception as e2:
+                logger.error(f"Error en fallback retrieval: {e2}", exc_info=True)
                 return []
     
-    return RunnableLambda(debug_retrieval_assembler)
+    return RunnableLambda(retrieval_assembler_step)
 
 
-def create_modular_self_query_pipeline(llm, vectorstore, top_k: int = 15):
+def create_modular_self_query_pipeline(
+    llm: BaseLanguageModel, 
+    vectorstore: Chroma, 
+    top_k: int = 15
+) -> Dict[str, Runnable]:
+    """
+    Crea un pipeline modular de self-query con componentes separados.
+    
+    Args:
+        llm: Modelo de lenguaje para routing y extracción
+        vectorstore: Almacén vectorial de ChromaDB
+        top_k: Número máximo de documentos a recuperar
+        
+    Returns:
+        Diccionario con componentes: semantic_router, filter_extractor, retrieval_assembler
+    """
     semantic_router = create_semantic_router(llm)
     filter_extractor = create_filter_extractor(llm)
     retrieval_assembler = create_retrieval_assembler(vectorstore, top_k)
@@ -518,7 +684,22 @@ def create_modular_self_query_pipeline(llm, vectorstore, top_k: int = 15):
     }
 
 
-def create_self_query_retriever(llm, vectorstore, top_k: int = 15):
+def create_self_query_retriever(
+    llm: BaseLanguageModel, 
+    vectorstore: Chroma, 
+    top_k: int = 15
+) -> Callable[[str], List[Document]]:
+    """
+    Crea un retriever simple de self-query como fallback.
+    
+    Args:
+        llm: Modelo de lenguaje (no usado actualmente, para compatibilidad)
+        vectorstore: Almacén vectorial de ChromaDB
+        top_k: Número máximo de documentos a recuperar
+        
+    Returns:
+        Función que recupera documentos usando búsqueda semántica simple
+    """
     def simple_self_query_retriever(question: str) -> List[Document]:
         try:
             retriever = vectorstore.as_retriever(search_kwargs={"k": top_k})

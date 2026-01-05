@@ -1,3 +1,4 @@
+import json
 from typing import Dict, Any
 from langchain_core.runnables import RunnableLambda
 
@@ -10,7 +11,16 @@ from ..steps.prompts import (
 )
 
 
-def create_quality_router(llm):
+def create_quality_router(llm: BaseLanguageModel) -> Runnable:
+    """
+    Crea un router de calidad para detectar y corregir errores ortográficos en preguntas.
+    
+    Args:
+        llm: Modelo de lenguaje para análisis de calidad
+        
+    Returns:
+        Runnable que procesa preguntas y corrige errores ortográficos si los hay
+    """
     def quality_router_step(x: Dict[str, Any]) -> Dict[str, Any]:
         try:
             raw_response = llm.invoke([
@@ -18,7 +28,6 @@ def create_quality_router(llm):
                 ("human", f"Analiza esta pregunta: '{x['question']}'")
             ])
             
-            import json
             try:
                 result_dict = json.loads(raw_response.content.strip())
                 has_errors = result_dict.get("has_spelling_errors", False)
@@ -34,9 +43,11 @@ def create_quality_router(llm):
                 }
                 
             except json.JSONDecodeError as json_error:
+                logger.warning(f"Error parsing JSON en quality router: {json_error}")
                 raise json_error
             
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error en quality router: {e}", exc_info=True)
             return {
                 **x, 
                 "question": x['question'],
@@ -47,7 +58,16 @@ def create_quality_router(llm):
     return RunnableLambda(quality_router_step)
 
 
-def create_main_router(llm):
+def create_main_router(llm: BaseLanguageModel) -> Runnable:
+    """
+    Crea un router principal para clasificar el tipo de pregunta.
+    
+    Args:
+        llm: Modelo de lenguaje para clasificación
+        
+    Returns:
+        Runnable que clasifica preguntas como 'simple', 'compleja' o 'step_back'
+    """
     main_router_llm = llm.with_structured_output(MainRouterOutput)
     
     def main_router_step(x: Dict[str, Any]) -> Dict[str, Any]:
@@ -60,7 +80,16 @@ def create_main_router(llm):
     return RunnableLambda(main_router_step)
 
 
-def create_decomposition_chain(llm):
+def create_decomposition_chain(llm: BaseLanguageModel) -> Runnable:
+    """
+    Crea una cadena para descomponer preguntas complejas en sub-preguntas.
+    
+    Args:
+        llm: Modelo de lenguaje para descomposición
+        
+    Returns:
+        Runnable que genera sub-preguntas a partir de una pregunta compleja
+    """
     decomp_llm = llm.with_structured_output(SubQuestionsOutput)
     
     def decomposition_step(x: Dict[str, Any]) -> Dict[str, Any]:
@@ -73,7 +102,16 @@ def create_decomposition_chain(llm):
     return RunnableLambda(decomposition_step)
 
 
-def create_step_back_generator(llm):
+def create_step_back_generator(llm: BaseLanguageModel) -> Runnable:
+    """
+    Crea un generador de preguntas step-back para razonamiento de alto nivel.
+    
+    Args:
+        llm: Modelo de lenguaje para generación de preguntas step-back
+        
+    Returns:
+        Runnable que genera preguntas más generales basadas en principios fundamentales
+    """
     stepback_llm = llm.with_structured_output(StepBackOutput)
     
     def step_back_generation_step(x: Dict[str, Any]) -> Dict[str, Any]:

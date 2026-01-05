@@ -1,5 +1,6 @@
 
 from src.pipelines import BasePipeline, DynamicRoutedRAGPipeline
+from src.utils.validators import QuestionValidator
 
 class Chatbot:
     """
@@ -10,9 +11,9 @@ class Chatbot:
         Inicializa el chatbot con una estrategia de pipeline específica.
         Si no se proporciona ninguna, usa DynamicRoutedRAGPipeline por defecto.
         """
-        print("--- Inicializando el Chatbot ---")
+        logger.info("Inicializando el Chatbot")
         if pipeline is None:
-            print("INFO: No se proporcionó un pipeline. Usando 'DynamicRoutedRAGPipeline' por defecto.")
+            logger.info("No se proporcionó un pipeline. Usando 'DynamicRoutedRAGPipeline' por defecto.")
             self.pipeline = DynamicRoutedRAGPipeline(
                 db_folder_name="db_BAAI_bge-m3_cs1024_co100",
                 embedding_model_name="BAAI/bge-m3",
@@ -23,14 +24,21 @@ class Chatbot:
             )
         else:
             self.pipeline = pipeline
-        print("--- Chatbot listo para conversar ---")
+        logger.info("Chatbot listo para conversar")
 
     def get_response(self, user_input: str) -> str:
         """
         Procesa la entrada del usuario y devuelve una respuesta formateada.
+        
+        Args:
+            user_input: Entrada del usuario
+            
+        Returns:
+            Respuesta formateada del chatbot
         """
-        if not user_input:
-            return "Por favor, escribe una pregunta."
+        is_valid, error_message = QuestionValidator.validate(user_input)
+        if not is_valid:
+            return error_message or "Por favor, escribe una pregunta válida."
 
         if user_input.lower() in ['hola', 'buenos días', 'buenas tardes']:
             return "¡Hola! ¿En qué puedo ayudarte hoy?"
@@ -38,7 +46,7 @@ class Chatbot:
         if user_input.lower() in ['gracias', 'muchas gracias']:
             return "De nada. ¡Estoy aquí para ayudar!"
 
-        print(f"DEBUG: Enviando la pregunta al pipeline: '{user_input}'")
+        logger.debug(f"Enviando la pregunta al pipeline: '{user_input}'")
         rag_output = self.pipeline.invoke(user_input)
 
         if rag_output.error:

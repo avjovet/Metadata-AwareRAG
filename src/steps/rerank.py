@@ -11,7 +11,17 @@ warnings.filterwarnings("ignore", message="flash_attn is not installed")
 
 
 class LocalJinaReranker:
+    """
+    Reranker local usando modelo Jina para reordenar documentos por relevancia.
+    """
     def __init__(self, model_name: str = None, top_n: int = None):
+        """
+        Inicializa el reranker Jina.
+        
+        Args:
+            model_name: Nombre del modelo de reranking (por defecto desde settings)
+            top_n: Número máximo de documentos a retornar después del reranking
+        """
         self.model_name = model_name or settings.RERANKER_MODEL
         self.top_n = top_n or settings.RERANKER_TOP_N
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -24,6 +34,16 @@ class LocalJinaReranker:
         )
     
     def rerank(self, query: str, documents: List[Document]) -> RerankResult:
+        """
+        Reordena documentos por relevancia respecto a una consulta.
+        
+        Args:
+            query: Consulta del usuario
+            documents: Lista de documentos a reordenar
+            
+        Returns:
+            RerankResult con documentos reordenados y conteos
+        """
         if not documents:
             return RerankResult(
                 documents=[],
@@ -54,15 +74,50 @@ class LocalJinaReranker:
         )
     
     def compress_documents(self, documents: List[Document], query: str) -> List[Document]:
+        """
+        Comprime una lista de documentos rerankeándolos y retornando solo los top_n.
+        
+        Args:
+            documents: Lista de documentos a comprimir
+            query: Consulta del usuario
+            
+        Returns:
+            Lista de documentos comprimida (solo los más relevantes)
+        """
         result = self.rerank(query, documents)
         return result.documents
 
 
 def create_reranker(model_name: str = None, top_n: int = None) -> LocalJinaReranker:
+    """
+    Crea una instancia de LocalJinaReranker.
+    
+    Args:
+        model_name: Nombre del modelo de reranking (por defecto desde settings)
+        top_n: Número máximo de documentos a retornar (por defecto desde settings)
+        
+    Returns:
+        Instancia de LocalJinaReranker configurada
+    """
     return LocalJinaReranker(model_name=model_name, top_n=top_n)
 
 
-def rerank_documents(query: str, documents: List[Document], reranker: LocalJinaReranker = None) -> RerankResult:
+def rerank_documents(
+    query: str, 
+    documents: List[Document], 
+    reranker: LocalJinaReranker = None
+) -> RerankResult:
+    """
+    Reordena documentos usando un reranker (crea uno si no se proporciona).
+    
+    Args:
+        query: Consulta del usuario
+        documents: Lista de documentos a reordenar
+        reranker: Instancia de reranker (se crea uno si es None)
+        
+    Returns:
+        RerankResult con documentos reordenados
+    """
     if reranker is None:
         reranker = create_reranker()
     

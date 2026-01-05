@@ -11,13 +11,19 @@ from ..steps.prompts import (
     COMPLEX_PROMPT,
     STEP_BACK_PROMPT
 )
-
-
-def docs_to_text(docs: List[Document]) -> str:
-    return "\n\n".join([d.page_content for d in docs])
+from ..utils.document_utils import docs_to_text
 
 
 def create_rag_answer_chain(llm):
+    """
+    Crea una cadena para generar respuestas RAG basadas en contexto.
+    
+    Args:
+        llm: Modelo de lenguaje para generación de respuestas
+        
+    Returns:
+        Runnable que genera respuestas usando contexto y pregunta
+    """
     return (
         {
             "context": lambda x: x.get("context", ""),
@@ -30,18 +36,60 @@ def create_rag_answer_chain(llm):
 
 
 def create_synthesis_chain(llm):
+    """
+    Crea una cadena para sintetizar múltiples respuestas en una sola.
+    
+    Args:
+        llm: Modelo de lenguaje para síntesis
+        
+    Returns:
+        Runnable que sintetiza múltiples respuestas
+    """
     return SYNTHESIS_PROMPT | llm | StrOutputParser()
 
 
 def create_complex_answer_chain(llm):
+    """
+    Crea una cadena para responder preguntas complejas con múltiples aspectos.
+    
+    Args:
+        llm: Modelo de lenguaje para generación de respuestas complejas
+        
+    Returns:
+        Runnable que genera respuestas estructuradas para preguntas complejas
+    """
     return COMPLEX_PROMPT | llm | StrOutputParser()
 
 
 def create_step_back_answer_chain(llm):
+    """
+    Crea una cadena para responder usando razonamiento step-back.
+    
+    Args:
+        llm: Modelo de lenguaje para razonamiento step-back
+        
+    Returns:
+        Runnable que genera respuestas usando contexto general y específico
+    """
     return STEP_BACK_PROMPT | llm | StrOutputParser()
 
 
-def process_complex_question(x: Dict[str, Any], llm, retrieval_func) -> Dict[str, Any]:
+def process_complex_question(
+    x: Dict[str, Any], 
+    llm, 
+    retrieval_func
+) -> Dict[str, Any]:
+    """
+    Procesa una pregunta compleja descomponiéndola y recuperando contexto relevante.
+    
+    Args:
+        x: Diccionario con pregunta y sub-preguntas
+        llm: Modelo de lenguaje para generación
+        retrieval_func: Función para recuperar documentos
+        
+    Returns:
+        Diccionario con respuesta generada, documentos recuperados y sub-preguntas
+    """
     sub_questions = x["sub_questions"]
     original_question = x["original_question"]
     
@@ -83,6 +131,16 @@ Respuesta Concisa y Estructurada:"""
 
 
 def create_complex_branch_chain(llm, retrieval_func):
+    """
+    Crea una cadena para procesar preguntas complejas en el pipeline.
+    
+    Args:
+        llm: Modelo de lenguaje para generación
+        retrieval_func: Función para recuperar documentos
+        
+    Returns:
+        RunnableLambda que procesa preguntas complejas
+    """
     def complex_step(x: Dict[str, Any]) -> Dict[str, Any]:
         result = process_complex_question(x, llm, retrieval_func)
         return {
@@ -95,6 +153,16 @@ def create_complex_branch_chain(llm, retrieval_func):
 
 
 def create_step_back_branch_chain(llm, retrieval_func):
+    """
+    Crea una cadena para procesar preguntas usando razonamiento step-back.
+    
+    Args:
+        llm: Modelo de lenguaje para generación
+        retrieval_func: Función para recuperar documentos
+        
+    Returns:
+        RunnableLambda que procesa preguntas con razonamiento step-back
+    """
     def step_back_step(x: Dict[str, Any]) -> Dict[str, Any]:
         step_back_question = x["step_back_question"]
         original_question = x["original_question"]

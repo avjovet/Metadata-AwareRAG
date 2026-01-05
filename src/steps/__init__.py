@@ -1,4 +1,5 @@
-from .retrieval import retrieve_documents, create_retrieval_chain, docs_to_text
+from .retrieval import retrieve_documents, create_retrieval_chain
+from ..utils.document_utils import docs_to_text
 from .rerank import create_reranker, rerank_documents, LocalJinaReranker
 from .routing import (
     create_quality_router,
