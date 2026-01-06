@@ -1,20 +1,28 @@
 # chat.py
 
+import os
 from src.chatbot_logic import Chatbot
 from src.pipelines import DynamicRoutedRAGPipeline
+from src.config.settings import settings, get_default_db_folder_name
 
 def main():
     """
     Función principal para iniciar el chatbot interactivo desde la línea de comandos.
     """
     try:
+        # Construir db_folder_name desde settings (formato JSON)
+        default_db_name = get_default_db_folder_name(
+            embedding_model=settings.EMBEDDER_MODEL,
+            db_identifier=settings.DEFAULT_DB_IDENTIFIER
+        )
+        
         rag_pipeline = DynamicRoutedRAGPipeline(
-            db_folder_name="db_BAAI_bge-m3_json_metadata",
-            embedding_model_name="BAAI/bge-m3", 
-            llm_model_name="llama3.1:8b", 
-            temperature=0.0,  
-            top_k=15,  
-            enable_self_query=True  
+            db_folder_name=os.getenv("DEFAULT_DB_FOLDER_NAME", default_db_name),
+            embedding_model_name=settings.EMBEDDER_MODEL,
+            llm_model_name=settings.OLLAMA_MODEL,
+            temperature=settings.DEFAULT_TEMPERATURE,
+            top_k=settings.DYNAMIC_PIPELINE_TOP_K,
+            enable_self_query=settings.ENABLE_SELF_QUERY
         )
         
         chatbot = Chatbot(pipeline=rag_pipeline)

@@ -1,7 +1,8 @@
-from typing import Dict, Any, List
-from langchain_core.runnables import RunnableLambda, RunnableParallel
+from typing import Dict, Any, List, Callable
+from langchain_core.runnables import RunnableLambda, RunnableParallel, Runnable
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
+from langchain_core.language_models import BaseLanguageModel
 
 from ..steps.prompts import (
     RAG_OPTIMIZED_PROMPT,
@@ -11,10 +12,10 @@ from ..steps.prompts import (
     COMPLEX_PROMPT,
     STEP_BACK_PROMPT
 )
-from ..utils.document_utils import docs_to_text
+from ..utils.document_utils import documents_to_text
 
 
-def create_rag_answer_chain(llm):
+def create_rag_answer_chain(llm: BaseLanguageModel) -> Runnable:
     """
     Crea una cadena para generar respuestas RAG basadas en contexto.
     
@@ -35,33 +36,7 @@ def create_rag_answer_chain(llm):
     )
 
 
-def create_synthesis_chain(llm):
-    """
-    Crea una cadena para sintetizar múltiples respuestas en una sola.
-    
-    Args:
-        llm: Modelo de lenguaje para síntesis
-        
-    Returns:
-        Runnable que sintetiza múltiples respuestas
-    """
-    return SYNTHESIS_PROMPT | llm | StrOutputParser()
-
-
-def create_complex_answer_chain(llm):
-    """
-    Crea una cadena para responder preguntas complejas con múltiples aspectos.
-    
-    Args:
-        llm: Modelo de lenguaje para generación de respuestas complejas
-        
-    Returns:
-        Runnable que genera respuestas estructuradas para preguntas complejas
-    """
-    return COMPLEX_PROMPT | llm | StrOutputParser()
-
-
-def create_step_back_answer_chain(llm):
+def create_step_back_answer_chain(llm: BaseLanguageModel) -> Runnable:
     """
     Crea una cadena para responder usando razonamiento step-back.
     
@@ -76,8 +51,8 @@ def create_step_back_answer_chain(llm):
 
 def process_complex_question(
     x: Dict[str, Any], 
-    llm, 
-    retrieval_func
+    llm: BaseLanguageModel, 
+    retrieval_func: Callable[[str], List[Document]]
 ) -> Dict[str, Any]:
     """
     Procesa una pregunta compleja descomponiéndola y recuperando contexto relevante.
@@ -99,26 +74,8 @@ def process_complex_question(
     
     topics_checklist = "\n".join([f"- {sq}" for sq in sub_questions])
     
-    complex_prompt = f"""
-Responde la pregunta principal de forma concisa y directa, basándote únicamente en el contexto proporcionado.
-
-REGLAS ESTRICTAS:
-- Sintetiza la información para cubrir los siguientes aspectos clave, sin añadir detalles extra:
-{topics_checklist}
-- NO incluyas introducciones, conclusiones ni información no solicitada.
-- Estructura la respuesta de forma clara, pero breve.
-- Cita artículos específicos cuando sea posible.
-- Si la respuesta a alguno de los aspectos no está en el contexto, omítelo.
-
-Contexto:
-{docs_to_text(retrieved_docs)}
-
-Pregunta: {original_question}
-
-Respuesta Concisa y Estructurada:"""
-    
     generated_answer = (COMPLEX_PROMPT | llm | StrOutputParser()).invoke({
-        "context": docs_to_text(retrieved_docs),
+        "context": documents_to_text(retrieved_docs),
         "question": original_question,
         "topics_checklist": topics_checklist
     })
@@ -130,7 +87,10 @@ Respuesta Concisa y Estructurada:"""
     }
 
 
-def create_complex_branch_chain(llm, retrieval_func):
+def create_complex_branch_chain(
+    llm: BaseLanguageModel, 
+    retrieval_func: Callable[[str], List[Document]]
+) -> RunnableLambda:
     """
     Crea una cadena para procesar preguntas complejas en el pipeline.
     
@@ -152,7 +112,10 @@ def create_complex_branch_chain(llm, retrieval_func):
     return RunnableLambda(complex_step)
 
 
-def create_step_back_branch_chain(llm, retrieval_func):
+def create_step_back_branch_chain(
+    llm: BaseLanguageModel, 
+    retrieval_func: Callable[[str], List[Document]]
+) -> RunnableLambda:
     """
     Crea una cadena para procesar preguntas usando razonamiento step-back.
     
@@ -177,8 +140,8 @@ def create_step_back_branch_chain(llm, retrieval_func):
         
         generated_answer = create_step_back_answer_chain(llm).invoke({
             "question": original_question, 
-            "normal_context": docs_to_text(contexts["normal_context"]),
-            "step_back_context": docs_to_text(contexts["step_back_context"])
+            "normal_context": documents_to_text(contexts["normal_context"]),
+            "step_back_context": documents_to_text(contexts["step_back_context"])
         })
         
         all_docs = contexts["normal_context"] + contexts["step_back_context"]

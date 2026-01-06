@@ -1,5 +1,5 @@
 from .retrieval import retrieve_documents, create_retrieval_chain
-from ..utils.document_utils import docs_to_text
+from ..utils.document_utils import documents_to_text
 from .rerank import create_reranker, rerank_documents, LocalJinaReranker
 from .routing import (
     create_quality_router,
@@ -13,12 +13,11 @@ from .synthesis import (
     create_step_back_branch_chain
 )
 from .self_query import create_self_query_retriever
-from .prompts import *
 
 __all__ = [
     'retrieve_documents',
     'create_retrieval_chain',
-    'docs_to_text',
+    'documents_to_text',
     'create_reranker',
     'rerank_documents',
     'LocalJinaReranker',

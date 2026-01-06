@@ -1,12 +1,15 @@
-from typing import List, Dict, Any
+import logging
+from typing import List, Dict, Any, Optional
 from langchain_core.documents import Document
-from langchain_core.runnables import RunnableLambda
+from langchain_core.runnables import RunnableLambda, Runnable
 from langchain_core.retrievers import BaseRetriever
+from langchain_core.language_models import BaseLanguageModel
 
 from ..types import RetrievalResult
 from ..steps.prompts import HYDE_PROMPT
 from ..config.settings import settings
-from ..utils.document_utils import docs_to_text
+
+logger = logging.getLogger(__name__)
 
 
 def is_ambiguous_query(question: str) -> bool:
@@ -26,7 +29,7 @@ def is_ambiguous_query(question: str) -> bool:
 def get_docs_with_hyde(
     question: str, 
     base_retriever: BaseRetriever, 
-    llm
+    llm: BaseLanguageModel
 ) -> List[Document]:
     """
     Obtiene documentos usando la técnica HYDE (Hypothetical Document Embeddings).
@@ -46,16 +49,17 @@ def get_docs_with_hyde(
         
         hyde_docs = base_retriever.invoke(hypothetical_doc)
         return hyde_docs
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Error en HYDE retrieval: {e}")
         return []
 
 
 def retrieve_documents(
     question: str, 
     base_retriever: BaseRetriever, 
-    llm=None,
+    llm: Optional[BaseLanguageModel] = None,
     use_hyde: bool = True,
-    top_k: int = None
+    top_k: Optional[int] = None
 ) -> RetrievalResult:
     """
     Recupera documentos relevantes para una pregunta usando búsqueda directa o HYDE.
@@ -76,7 +80,7 @@ def retrieve_documents(
     
     retrieval_method = "direct"
     
-    if use_hyde and llm and (len(docs) < 5 or is_ambiguous_query(question)):
+    if use_hyde and llm and (len(docs) < settings.MIN_DOCS_FOR_HYDE or is_ambiguous_query(question)):
         hyde_docs = get_docs_with_hyde(question, base_retriever, llm)
         
         if hyde_docs:
@@ -99,10 +103,10 @@ def retrieve_documents(
 
 def create_retrieval_chain(
     base_retriever: BaseRetriever, 
-    llm=None, 
+    llm: Optional[BaseLanguageModel] = None, 
     use_hyde: bool = True, 
-    top_k: int = None
-):
+    top_k: Optional[int] = None
+) -> Runnable:
     """
     Crea una cadena de recuperación de documentos para usar en pipelines.
     

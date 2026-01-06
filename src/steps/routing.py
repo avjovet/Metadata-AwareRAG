@@ -1,6 +1,8 @@
 import json
+import logging
 from typing import Dict, Any
-from langchain_core.runnables import RunnableLambda
+from langchain_core.runnables import RunnableLambda, Runnable
+from langchain_core.language_models import BaseLanguageModel
 
 from ..types import QualityRouterOutput, MainRouterOutput, SubQuestionsOutput, StepBackOutput
 from ..steps.prompts import (
@@ -9,6 +11,8 @@ from ..steps.prompts import (
     DECOMPOSITION_SYSTEM_PROMPT,
     STEP_BACK_SYSTEM_PROMPT
 )
+
+logger = logging.getLogger(__name__)
 
 
 def create_quality_router(llm: BaseLanguageModel) -> Runnable:
@@ -29,7 +33,8 @@ def create_quality_router(llm: BaseLanguageModel) -> Runnable:
             ])
             
             try:
-                result_dict = json.loads(raw_response.content.strip())
+                response_content = raw_response.content.strip()
+                result_dict = json.loads(response_content)
                 has_errors = result_dict.get("has_spelling_errors", False)
                 corrected_question = result_dict.get("corrected_question", None)
                 
@@ -43,11 +48,29 @@ def create_quality_router(llm: BaseLanguageModel) -> Runnable:
                 }
                 
             except json.JSONDecodeError as json_error:
-                logger.warning(f"Error parsing JSON en quality router: {json_error}")
-                raise json_error
+                # Agregar contexto útil al error
+                response_preview = (
+                    raw_response.content[:200] 
+                    if hasattr(raw_response, 'content') and raw_response.content 
+                    else 'N/A'
+                )
+                logger.warning(
+                    f"Error parsing JSON en quality router para pregunta '{x.get('question', 'N/A')}': {json_error}. "
+                    f"Respuesta del LLM (primeros 200 caracteres): {response_preview}"
+                )
+                # No relanzar, usar valor por defecto
+                return {
+                    **x,
+                    "question": x['question'],
+                    "original_question": x['question'],
+                    "has_spelling_errors": False
+                }
             
         except Exception as e:
-            logger.error(f"Error en quality router: {e}", exc_info=True)
+            logger.error(
+                f"Error en quality router para pregunta '{x.get('question', 'N/A')}': {e}",
+                exc_info=True
+            )
             return {
                 **x, 
                 "question": x['question'],

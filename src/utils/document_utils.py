@@ -17,6 +17,3 @@ def documents_to_text(documents: List[Document]) -> str:
     return "\n\n".join([doc.page_content for doc in documents])
 
 
-# Alias para compatibilidad con código existente
-docs_to_text = documents_to_text
-

@@ -3,13 +3,12 @@
 
 # Exportar las interfaces principales
 from .pipelines.builder import create_pipeline, BasePipeline, NaiveRAGPipeline, DynamicRoutedRAGPipeline
-from .types import PipelineInput, PipelineOutput
+from .types import PipelineOutput
 
 __all__ = [
     'create_pipeline',
     'BasePipeline', 
     'NaiveRAGPipeline',
     'DynamicRoutedRAGPipeline',
-    'PipelineInput',
     'PipelineOutput'
 ]

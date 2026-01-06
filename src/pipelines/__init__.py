@@ -5,7 +5,7 @@ from .builder import (
     DynamicRoutedRAGPipeline
 )
 from .naive import create_naive_rag_pipeline, invoke_naive_pipeline
-from .dinamic import create_dynamic_rag_pipeline, invoke_dynamic_pipeline
+from .dynamic import create_dynamic_rag_pipeline, invoke_dynamic_pipeline
 
 __all__ = [
     'create_pipeline',

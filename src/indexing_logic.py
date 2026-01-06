@@ -3,10 +3,6 @@ from pathlib import Path
 import torch
 import json
 from typing import List, Dict, Any, Optional
-import sys
-import os
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader, TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -14,7 +10,7 @@ from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 
-from config import settings
+from .config.settings import settings
 
 def get_embedding_model(model_name: str) -> HuggingFaceEmbeddings:
     """Función auxiliar para inicializar el modelo de embeddings."""

@@ -1,6 +1,12 @@
+import logging
+import os
 
 from src.pipelines import BasePipeline, DynamicRoutedRAGPipeline
 from src.utils.validators import QuestionValidator
+from src.config.settings import settings, get_default_db_folder_name
+
+logger = logging.getLogger(__name__)
+
 
 class Chatbot:
     """
@@ -14,13 +20,21 @@ class Chatbot:
         logger.info("Inicializando el Chatbot")
         if pipeline is None:
             logger.info("No se proporcionó un pipeline. Usando 'DynamicRoutedRAGPipeline' por defecto.")
+            
+            # Construir db_folder_name desde settings (formato raw con chunking)
+            default_db_name = get_default_db_folder_name(
+                embedding_model=settings.EMBEDDER_MODEL,
+                chunk_size=settings.CHUNK_SIZE,
+                chunk_overlap=settings.CHUNK_OVERLAP
+            )
+            
             self.pipeline = DynamicRoutedRAGPipeline(
-                db_folder_name="db_BAAI_bge-m3_cs1024_co100",
-                embedding_model_name="BAAI/bge-m3",
-                llm_model_name="llama3.1:8b",
-                temperature=0.0,
-                top_k=15,
-                enable_self_query=True
+                db_folder_name=os.getenv("DEFAULT_DB_FOLDER_NAME", default_db_name),
+                embedding_model_name=settings.EMBEDDER_MODEL,
+                llm_model_name=settings.OLLAMA_MODEL,
+                temperature=settings.DEFAULT_TEMPERATURE,
+                top_k=settings.DYNAMIC_PIPELINE_TOP_K,
+                enable_self_query=settings.ENABLE_SELF_QUERY
             )
         else:
             self.pipeline = pipeline

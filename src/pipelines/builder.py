@@ -1,9 +1,9 @@
 from typing import Dict, Any, Optional
 from abc import ABC, abstractmethod
 
-from ..types import PipelineInput, PipelineOutput
+from ..types import PipelineOutput
 from .naive import create_naive_rag_pipeline, invoke_naive_pipeline
-from .dinamic import create_dynamic_rag_pipeline, invoke_dynamic_pipeline
+from .dynamic import create_dynamic_rag_pipeline, invoke_dynamic_pipeline
 
 
 class BasePipeline(ABC):

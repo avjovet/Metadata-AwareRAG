@@ -21,13 +21,6 @@ class MainRouterOutput(BaseModel):
     )
 
 
-class QueryRewriteOutput(BaseModel):
-    """Pregunta reescrita optimizada."""
-    rewritten_question: str = Field(
-        description="Pregunta reescrita de forma clara y concisa"
-    )
-
-
 class StepBackOutput(BaseModel):
     """Pregunta step-back generada."""
     step_back_question: str = Field(
@@ -58,11 +51,6 @@ class RerankResult(BaseModel):
     final_count: int = Field(description="Número final de documentos")
 
 
-class PipelineInput(BaseModel):
-    """Entrada estándar para todos los pipelines."""
-    question: str = Field(description="Pregunta del usuario")
-
-
 class PipelineOutput(BaseModel):
     """Salida estándar para todos los pipelines."""
     question: str = Field(description="Pregunta original")
@@ -91,15 +79,6 @@ class SelfQueryOutput(BaseModel):
     reasoning: str = Field(
         description="Explicación de cómo se interpretó la pregunta para generar el filtro"
     )
-
-
-class SelfQueryResult(BaseModel):
-    """Resultado de la recuperación con Self-Query."""
-    documents: List[Document] = Field(description="Documentos recuperados con filtros")
-    query: str = Field(description="Consulta semántica usada")
-    filter_applied: str = Field(description="Filtro de metadatos aplicado")
-    documents_found: int = Field(description="Número de documentos encontrados")
-
 
 
 class SemanticRouterOutput(BaseModel):
@@ -144,19 +123,3 @@ class ExtractedFilters(BaseModel):
         description="Tema específico (derechos fundamentales, trabajo, etc.)"
     )
 
-
-class StructuredRetrievalInput(BaseModel):
-    """Input estructurado para el ensamblador de recuperación."""
-    semantic_query: str = Field(
-        description="Consulta semántica optimizada para búsqueda vectorial"
-    )
-    category: str = Field(
-        description="Categoría del documento objetivo"
-    )
-    filters: ExtractedFilters = Field(
-        description="Filtros estructurados extraídos"
-    )
-    top_k: int = Field(
-        default=15,
-        description="Número máximo de documentos a recuperar"
-    )

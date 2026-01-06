@@ -3,7 +3,7 @@ import argparse
 import torch
 from src.indexer import create_knowledge_base
 from langchain_huggingface import HuggingFaceEmbeddings
-from config.settings import settings
+from src.config.settings import settings
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Indexar documentos para RAG")

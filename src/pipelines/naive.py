@@ -1,3 +1,4 @@
+import logging
 from typing import Dict, Any, Optional
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda, Runnable
 from langchain_core.output_parsers import StrOutputParser
@@ -5,10 +6,12 @@ from langchain_core.output_parsers import StrOutputParser
 from ..io.vectordb import get_vector_store
 from ..io.llm import get_llm
 from ..steps.prompts import RAG_BASIC_PROMPT
-from ..steps.retrieval import docs_to_text
-from ..types import PipelineInput, PipelineOutput
+from ..utils.document_utils import documents_to_text
+from ..types import PipelineOutput
 from ..config.settings import settings
 from ..utils.validators import QuestionValidator
+
+logger = logging.getLogger(__name__)
 
 
 def create_naive_rag_pipeline(
@@ -43,7 +46,7 @@ def create_naive_rag_pipeline(
     
     chain = (
         RunnablePassthrough.assign(original_docs=RunnableLambda(lambda x: x["question"]) | retriever)
-        .assign(context=lambda x: docs_to_text(x["original_docs"]))
+        .assign(context=lambda x: documents_to_text(x["original_docs"]))
         .assign(answer=rag_chain_from_docs)
     )
     
@@ -70,10 +73,19 @@ def invoke_naive_pipeline(chain: Runnable, question: str) -> PipelineOutput:
             error=error_message
         )
     
-    output = chain.invoke({"question": question})
-    
-    return PipelineOutput(
-        question=question,
-        generated_answer=output["answer"],
-        retrieved_context=[doc.page_content for doc in output["original_docs"]]
-    )
+    try:
+        output = chain.invoke({"question": question})
+        
+        return PipelineOutput(
+            question=question,
+            generated_answer=output["answer"],
+            retrieved_context=[doc.page_content for doc in output["original_docs"]]
+        )
+    except Exception as e:
+        logger.error(f"Error en naive pipeline: {e}", exc_info=True)
+        return PipelineOutput(
+            question=question,
+            generated_answer=f"Error en el pipeline: {str(e)}",
+            retrieved_context=[],
+            error=str(e)
+        )
