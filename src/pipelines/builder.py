@@ -41,7 +41,11 @@ class DynamicRoutedRAGPipeline(BasePipeline):
         llm_model_name: str = None,
         temperature: float = None,
         top_k: int = None,
-        enable_self_query: bool = None
+        enable_self_query: bool = None,
+        enable_metadata_filtering: bool = True,
+        enable_adaptive_filtering: bool = True,
+        enable_reranker: bool = True,
+        enable_fallback: bool = True
     ):
         self.chain = create_dynamic_rag_pipeline(
             db_folder_name=db_folder_name,
@@ -49,7 +53,11 @@ class DynamicRoutedRAGPipeline(BasePipeline):
             llm_model_name=llm_model_name,
             temperature=temperature,
             top_k=top_k,
-            enable_self_query=enable_self_query
+            enable_self_query=enable_self_query,
+            enable_metadata_filtering=enable_metadata_filtering,
+            enable_adaptive_filtering=enable_adaptive_filtering,
+            enable_reranker=enable_reranker,
+            enable_fallback=enable_fallback
         )
     
     def invoke(self, question: str) -> PipelineOutput:

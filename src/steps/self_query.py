@@ -467,7 +467,7 @@ def build_chromadb_filter(filters: Dict[str, Any]) -> Optional[dict]:
         return {"$and": filter_conditions}
 
 
-def create_retrieval_assembler(vectorstore, top_k: int = 15) -> RunnableLambda:
+def create_retrieval_assembler(vectorstore, top_k: int = 15, enable_adaptive_filtering: bool = True, enable_fallback: bool = True) -> RunnableLambda:
     def debug_retrieval_assembler(inputs: Dict[str, Any]) -> List[Document]:
         question = inputs.get("question", "")
         filters = inputs.get("extracted_filters", ExtractedFilters())
@@ -476,8 +476,40 @@ def create_retrieval_assembler(vectorstore, top_k: int = 15) -> RunnableLambda:
         try:
             validated_filters, discarded_filters = validate_and_normalize_filters(filters)
             
-            strategies = create_filter_strategies(validated_filters, semantic_category)
+            if enable_adaptive_filtering:
+                strategies = create_filter_strategies(validated_filters, semantic_category)
+            else:
+                fixed_metadata = {
+                    "constitucion": {
+                        "source": "Constitución Política del Perú",
+                        "document_type": "constitucion", 
+                        "topic": "derechos_fundamentales"
+                    },
+                    "derecho_laboral": {
+                        "source": "Compendio Derecho Laboral",
+                        "document_type": "decreto",
+                        "topic": "derecho_laboral"
+                    },
+                    "faq": {
+                        "source": "Preguntas Frecuentes", 
+                        "document_type": "faq",
+                        "topic": "Preguntas Frecuentes"
+                    },
+                    "general": {}
+                }
+                fixed_filters = fixed_metadata.get(semantic_category, {})
+                all_filters = fixed_filters.copy()
+                for key, value in validated_filters.items():
+                    if value is not None:
+                        all_filters[key] = value
+                
+                strategies = [{
+                    "name": "single_strategy",
+                    "filters": all_filters,
+                    "description": f"Estrategia única: {list(all_filters.keys())}"
+                }]
             
+            tried_unfiltered_search = False
             for i, strategy in enumerate(strategies, 1):
                 chroma_filter = build_chromadb_filter(strategy['filters'])
                 
@@ -486,12 +518,22 @@ def create_retrieval_assembler(vectorstore, top_k: int = 15) -> RunnableLambda:
                         search_kwargs={"k": top_k, "filter": chroma_filter}
                     )
                 else:
+                    tried_unfiltered_search = True
                     retriever = vectorstore.as_retriever(search_kwargs={"k": top_k})
                 
                 docs = retriever.invoke(question)
                 
                 if docs:
                     return docs
+            
+            if enable_fallback and not tried_unfiltered_search:
+                try:
+                    basic_retriever = vectorstore.as_retriever(search_kwargs={"k": top_k})
+                    fallback_docs = basic_retriever.invoke(question)
+                    if fallback_docs:
+                        return fallback_docs
+                except Exception:
+                    pass
             
             return []
             
@@ -506,10 +548,10 @@ def create_retrieval_assembler(vectorstore, top_k: int = 15) -> RunnableLambda:
     return RunnableLambda(debug_retrieval_assembler)
 
 
-def create_modular_self_query_pipeline(llm, vectorstore, top_k: int = 15):
+def create_modular_self_query_pipeline(llm, vectorstore, top_k: int = 15, enable_adaptive_filtering: bool = True, enable_fallback: bool = True):
     semantic_router = create_semantic_router(llm)
     filter_extractor = create_filter_extractor(llm)
-    retrieval_assembler = create_retrieval_assembler(vectorstore, top_k)
+    retrieval_assembler = create_retrieval_assembler(vectorstore, top_k, enable_adaptive_filtering, enable_fallback)
     
     return {
         "semantic_router": semantic_router,

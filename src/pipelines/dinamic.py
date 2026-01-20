@@ -36,7 +36,11 @@ def create_dynamic_rag_pipeline(
     llm_model_name: str = None,
     temperature: float = None,
     top_k: int = None,
-    enable_self_query: bool = None
+    enable_self_query: bool = None,
+    enable_metadata_filtering: bool = True,
+    enable_adaptive_filtering: bool = True,
+    enable_reranker: bool = True,
+    enable_fallback: bool = True
 ) -> Runnable:
     llm_model_name = llm_model_name or "llama3.1:8b"
     temperature = temperature or 0.0
@@ -45,11 +49,17 @@ def create_dynamic_rag_pipeline(
     
     vector_store = get_vector_store(db_folder_name, embedding_model_name)
     llm = get_llm(model_name=llm_model_name, temperature=temperature)
-    reranker = create_reranker()
     
-    modular_components = create_modular_self_query_pipeline(llm, vector_store, top_k=top_k)
+    reranker = create_reranker() if enable_reranker else None
     
-    self_query_retriever = create_self_query_retriever(llm, vector_store, top_k=top_k)
+    if enable_metadata_filtering:
+        modular_components = create_modular_self_query_pipeline(
+            llm, vector_store, top_k=top_k, enable_adaptive_filtering=enable_adaptive_filtering, enable_fallback=enable_fallback
+        )
+        self_query_retriever = create_self_query_retriever(llm, vector_store, top_k=top_k)
+    else:
+        modular_components = None
+        self_query_retriever = None
     
     def debug_quality_router(inputs: Dict[str, Any]) -> Dict[str, Any]:
         question = inputs.get("question", "NO_QUESTION")
@@ -74,30 +84,41 @@ def create_dynamic_rag_pipeline(
 
     quality_router_chain = RunnableLambda(debug_quality_router)
 
-    def rerank_docs(inputs: Dict[str, Any]) -> List[Document]:
-        question = inputs.get("question", "NO_QUESTION")
-        
-        if "retrieved_docs" not in inputs:
-            return []
-        
-        docs = inputs["retrieved_docs"]
-        
-        if not docs:
-            return []
-        
-        try:
-            from ..steps.rerank import rerank_documents
-            rerank_result = rerank_documents(question, docs, reranker)
-            return rerank_result.documents
-        except Exception as e:
-            return docs
+    if enable_reranker and reranker:
+        def rerank_docs(inputs: Dict[str, Any]) -> List[Document]:
+            question = inputs.get("question", "NO_QUESTION")
+            
+            if "retrieved_docs" not in inputs:
+                return []
+            
+            docs = inputs["retrieved_docs"]
+            
+            if not docs:
+                return []
+            
+            try:
+                from ..steps.rerank import rerank_documents
+                rerank_result = rerank_documents(question, docs, reranker)
+                return rerank_result.documents
+            except Exception as e:
+                return docs
 
-    rerank_chain = RunnableLambda(rerank_docs)
+        rerank_chain = RunnableLambda(rerank_docs)
+    else:
+        rerank_chain = RunnableLambda(lambda x: x.get("retrieved_docs", []))
 
     rag_answer_chain = create_rag_answer_chain(llm)
     
     def modular_self_query_with_debug(inputs: Dict[str, Any]) -> List[Document]:
         question = inputs.get("question", "NO_QUESTION")
+        
+        if not enable_metadata_filtering or modular_components is None:
+            try:
+                basic_retriever = vector_store.as_retriever(search_kwargs={"k": top_k})
+                docs = basic_retriever.invoke(question)
+                return docs
+            except Exception as e:
+                return []
         
         try:
             try:
@@ -126,15 +147,18 @@ def create_dynamic_rag_pipeline(
                 
         except Exception as e:
             try:
-                docs = self_query_retriever.invoke(question)
-                return docs
-            except Exception as e2:
-                try:
-                    basic_retriever = vector_store.as_retriever(search_kwargs={"k": top_k})
-                    docs = basic_retriever.invoke(question)
+                if self_query_retriever:
+                    docs = self_query_retriever.invoke(question)
                     return docs
-                except Exception as e3:
-                    return []
+            except Exception as e2:
+                pass
+            
+            try:
+                basic_retriever = vector_store.as_retriever(search_kwargs={"k": top_k})
+                docs = basic_retriever.invoke(question)
+                return docs
+            except Exception as e3:
+                return []
     
     self_query_chain = RunnableLambda(modular_self_query_with_debug)
     
@@ -171,18 +195,28 @@ def create_dynamic_rag_pipeline(
     def format_output(chain_result: Dict) -> PipelineOutput:
         retrieved_docs = chain_result.get("retrieved_docs", [])
         
+        if retrieved_docs is None or not isinstance(retrieved_docs, list):
+            retrieved_docs = []
+        
+        valid_docs = [doc for doc in retrieved_docs if isinstance(doc, Document)]
+        
         route_quality_value = None
+        has_errors = False
         if "has_spelling_errors" in chain_result:
             has_errors = chain_result.get("has_spelling_errors", False)
             route_quality_value = "mal_redactada" if has_errors else "simple"
 
+        corrected_question_value = None
+        if has_errors:
+            corrected_question_value = chain_result.get("corrected_question") or chain_result.get("question")
+
         output = PipelineOutput(
-            question=chain_result["original_question"],
-            generated_answer=chain_result["generated_answer"],
-            retrieved_context=[doc.page_content for doc in retrieved_docs],
+            question=chain_result.get("original_question", chain_result.get("question", "")),
+            generated_answer=chain_result.get("generated_answer", ""),
+            retrieved_context=[doc.page_content for doc in valid_docs],
             route_quality=route_quality_value,
             route="simplified",
-            corrected_question=chain_result.get("question") if chain_result.get("has_spelling_errors") else None
+            corrected_question=corrected_question_value
         )
         
         return output
