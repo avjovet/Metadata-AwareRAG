@@ -4,6 +4,10 @@ This repository contains the dataset and resources for our research on a novel M
 
 ---
 
+![Metadata-Aware RAG](framework.png)
+
+---
+
 ## Contents
 
 **Dataset:**  
@@ -20,4 +24,5 @@ A RAG system with two key components:
 - Alexandra V. Jove-Ticona (avjovet@unjbg.edu.pe)
 - Luis J. Duarte-Coaquera (ljduartec@unjbg.edu.pe)
 - Israel N. Chaparro-Cruz (ichaparroc@unjbg.edu.pe)
+- Silvana B. Cabana-Yupanqui (scabanay@unjbg.edu.pe)
 - Américo Chaparro-Guerra (achaparrog@unjbg.edu.pe)
